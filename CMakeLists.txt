@@ -43,9 +43,10 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3")
 
 if (UNIX)
     set(SystemC_DIR "/opt/systemC")
+    set(SystemCLanguage_DIR "/opt/systemC/lib/cmake/SystemCLanguage")
 endif (UNIX)
 
-find_package(SystemCLanguage 2.3.4 REQUIRED)
+find_package(SystemCLanguage 2.3 REQUIRED)
 
 if(SystemCLanguage_FOUND)
   include_directories(${SystemC_DIR}/include)
@@ -60,3 +61,4 @@ set(CMAKE_INSTALL_PREFIX ${PROJECT_SOURCE_DIR}/artifacts)
 
 ### Project Source Tree ###
 add_subdirectory("src")
+add_subdirectory("libs")
