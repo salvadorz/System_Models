@@ -111,8 +111,132 @@ public:
 };
 
 /**
+ * @brief Conveyor module
+ * This module simulates 1 conveyor segment. The segment is not aware of
+ * how long it is. Each conveyor segment has a motor that can be turned on or off
+ * to make the segment move baggage. Each segment has a rotary shaft encoder that
+ * outputs a pulse-train. A certain number of pulses corresponds to a certain amount of
+ * linear movement of the segment. A small local embedded system board with a microcontroller,
+ * counts the pulses from the rotary shaft encoder. The rotary shaft encoder is fitted with a
+ * temperature sensor and a vibration sensor in order to monitor the "health" of the encoder.
+ * @param Input control_packet from control system
+ * @param Output conveyor_sts_packet to control system
+ */
+class conveyor : public sc_module {
+private:
+  int temp;
+  int vibr;
+  int count;
+  int my_id;
+  int running;
+  int tmp_var;
+  int samples_available;
+
+  control_packet      *ctrl_pkt_ptr;
+  conveyor_sts_packet *conveyor_pkt_ptr;
+
+public:
+  sc_port<sc_fifo_out_if<conveyor_sts_packet *> > out;
+  sc_port<sc_fifo_in_if<control_packet *> >       in;
+
+  SC_HAS_PROCESS(conveyor);
+
+  conveyor(sc_module_name name, int id) : sc_module(name), my_id(id) {
+
+    SC_THREAD(conveyor_thread);
+
+    running = CONTROL_PKT_MSG_TURN_OFF;
+
+    count = rand();
+    temp  = 0;
+    vibr  = 0;
+  }
+
+  void conveyor_thread() {
+
+    // get each instance off of time=0 by some random amount
+    tmp_var = (rand() % 20) + 1; // 1 to 20 ms
+    wait(tmp_var, SC_MS);
+
+    while (true) {
+      wait(CONVEYOR_REPORT_RATE_MS, SC_MS);
+
+      // --------------------------------
+      // Check for received control packets
+      // --------------------------------
+
+      samples_available = in->num_available();
+      if (samples_available != 0) {
+
+        in->read(ctrl_pkt_ptr);
+
+        // perform required processsing
+        if (ctrl_pkt_ptr->get_msg() == CONTROL_PKT_MSG_TURN_ON) {
+          running = CONTROL_PKT_MSG_TURN_ON;
+
+          printf("\nInfo: conveyor_inst: control_pkt received: \n");
+          printf("Info: Turning On \n");
+        }
+
+        // perform required processsing
+        if (ctrl_pkt_ptr->get_msg() == CONTROL_PKT_MSG_TURN_OFF) {
+          running = CONTROL_PKT_MSG_TURN_OFF;
+
+          printf("\nInfo: conveyor_inst: control_pkt received: \n");
+          printf("Info: Turning Off \n");
+        }
+
+        ctrl_pkt_ptr->print();
+
+        delete ctrl_pkt_ptr; // free memory
+      }
+
+      // --------------------------------
+      // if running, send status
+      // --------------------------------
+      if (running) {
+
+        // update the variables for the fields in the packet
+
+        // encoder count
+        count += (int)ENCODER_COUNT_INCREMENT;
+
+        // temperature
+        tmp_var = rand();
+        if (tmp_var & 0x00000001)
+          temp = TEMPERATURE_MEAN + (tmp_var % (TEMPERATURE_VARIANCE / 2));
+        else
+          temp = TEMPERATURE_MEAN - (tmp_var % (TEMPERATURE_VARIANCE / 2));
+
+        // vibration
+        tmp_var = rand();
+        if (tmp_var & 0x00000001)
+          vibr = VIBRATION_MEAN + (tmp_var % (VIBRATION_VARIANCE / 2));
+        else
+          vibr = VIBRATION_MEAN - (tmp_var % (VIBRATION_VARIANCE / 2));
+
+        // create a packet
+        conveyor_pkt_ptr = new conveyor_sts_packet();
+
+        // fill out the packet
+        conveyor_pkt_ptr->set_id(my_id);
+        conveyor_pkt_ptr->set_vibration(vibr);
+        conveyor_pkt_ptr->set_temperature(temp);
+        conveyor_pkt_ptr->set_current_cnt(count);
+        conveyor_pkt_ptr->set_timestamp(sc_time_stamp());
+
+        out->write(conveyor_pkt_ptr); // send it
+      }
+
+    } // end while
+
+  } // End conveyor thread
+};
+
+/**
  * @brief Control_system module
- * This module controls the conveyor belt. It communicates with the scanner and the conveyor through sc_fifos
+ * This module controls the conveyor belt. It communicates with the scanner and the conveyor through
+ * sc_fifos
  * @param Input scanner_sts_packet from scanner
  * @param Input conveyor_sts_packet from conveyor system
  * @param Output control_packet to scanner system
@@ -150,7 +274,8 @@ public:
 
   SC_HAS_PROCESS(Control_System);
 
-  Control_System(sc_module_name name, int csl_count) : sc_module(name), control_system_loop_count(csl_count), bag_hash(true, 128) {
+  Control_System(sc_module_name name, int csl_count)
+      : sc_module(name), control_system_loop_count(csl_count), bag_hash(true, 128) {
     // process declaration
     SC_THREAD(control_system_thread);
 
@@ -164,7 +289,7 @@ public:
     // initialize ports
     seg_in_port[0]  = &seg0_in;
     seg_out_port[0] = &seg0_out;
-    //bag_hash        = new ds::HashMap(true, 128);
+    // bag_hash        = new ds::HashMap(true, 128);
   }
 
   void control_system_thread() {
@@ -257,12 +382,81 @@ public:
     cout.flush();
     sc_stop();
   } // end control_system_thread
-  ~Control_System() {
+  ~Control_System() {}
+};
+
+/**
+ * @brief Top level module
+ * Creates instance variables for each submodule to be instantiated
+ *
+ */
+class top : public sc_module {
+public:
+  // declare instance variables
+  sc_fifo<scanner_sts_packet *> baggage_stfifo_inst;
+  sc_fifo<control_packet *>     baggage_ctlfifo_inst;
+  scanner                       baggage_scanner_inst;
+
+  sc_fifo<conveyor_sts_packet *> conveyor_seg_stfifo_inst0;
+  sc_fifo<control_packet *>      conveyor_seg_ctlfifo_inst0;
+  conveyor                       conveyor_seg_inst0;
+
+  Control_System control_system_inst;
+
+  // constructor, create the module instantiations
+  top(sc_module_name name, int csl_count)
+      : sc_module(name),
+        //, control_system_loop_count(csl_count) , // bind variables
+
+        baggage_stfifo_inst("baggage_stfifo_inst", 16), baggage_ctlfifo_inst("baggage_ctlfifo_inst", 16),
+        baggage_scanner_inst("baggage_scanner_inst"),
+
+        conveyor_seg_stfifo_inst0("conveyor_seg_stfifo_inst0", 16),
+        conveyor_seg_ctlfifo_inst0("conveyor_seg_ctlfifo_inst0", 16),
+        conveyor_seg_inst0("conveyor_seg_inst0", 100), // ID=100
+
+        control_system_inst("control_system_inst", csl_count)
+
+  {
+
+    // port binding, connecting the sc_fifos to their ports
+    baggage_scanner_inst.out(baggage_stfifo_inst);
+    control_system_inst.scanner_in(baggage_stfifo_inst);
+
+    control_system_inst.scanner_out(baggage_ctlfifo_inst);
+    baggage_scanner_inst.in(baggage_ctlfifo_inst);
+
+    conveyor_seg_inst0.out(conveyor_seg_stfifo_inst0);
+    control_system_inst.seg0_in(conveyor_seg_stfifo_inst0);
+
+    control_system_inst.seg0_out(conveyor_seg_ctlfifo_inst0);
+    conveyor_seg_inst0.in(conveyor_seg_ctlfifo_inst0);
   }
 };
 
-int sc_main(int, char *[]) {
+int sc_main(int argc, char *argv[]) {
+  int seed                      = 5;
+  int control_system_loop_count = 5000000;
 
-  sc_start();
+  // -----------------------------------
+  // input validation
+  // -----------------------------------
+  if (argc > 1) seed = atoi(argv[1]);
+
+  if (argc > 2) control_system_loop_count = atoi(argv[2]);
+
+  std::srand(seed);
+  // std::srand(time(0) ^ getpid()); // FIXME seed, command line arg
+
+  printf("Command line arguments:\n");
+  printf("  seed       = %d\n", seed);
+  printf("  loop count = %d\n", control_system_loop_count);
+
+  // printf("FYI: encoder count inc=%f\n", ENCODER_COUNT_INCREMENT);
+
+  // instantiation of top
+  top top_inst("top_inst", control_system_loop_count);
+
+  sc_start(); // burn simulation time
   return 0;
 }
