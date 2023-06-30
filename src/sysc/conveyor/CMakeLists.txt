@@ -7,4 +7,4 @@
 #*@brief CMakeLists file to create conveyor model target
 #*
 add_executable (conveyor conveyor.cpp)
-target_link_libraries (conveyor SystemC::systemc)
+target_link_libraries (conveyor Hash SystemC::systemc)

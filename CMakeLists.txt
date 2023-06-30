@@ -50,6 +50,7 @@ find_package(SystemCLanguage 2.3 REQUIRED)
 
 if(SystemCLanguage_FOUND)
   include_directories(${SystemC_DIR}/include)
+  include_directories(${PROJECT_SOURCE_DIR}/libs/include)
   # Create an output dir in CMAKE_BINARY_DIR
   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/${CMAKE_BUILD_TYPE})
 else()
